@@ -1,0 +1,292 @@
+---
+title: "Lecture3_Rcode"
+author: "Nemanja Vaci"
+date: "February 23, 2021"
+output: html_document
+---
+
+```{r}
+sessionInfo()
+```
+
+Adding more variables to our data. It just keeps growing: 
+
+```{r}
+set.seed(456)
+Babies=data.frame(Age=round(runif(100,1,30)), Weight=rnorm(100,4000,500))
+Babies$Height=rnorm(100,40+0.2*Babies$Age+0.004*Babies$Weight, 5)
+Babies$Gender=rbinom(100,1,0.5)
+Babies$Crawl=rbinom(100,1,0.031*Babies$Age+0.00001*Babies$Weight-0.06*Babies$Gender)
+Babies$TummySleep=rbinom(100,1,0.5)
+Babies$PhysicalSt=rnorm(100,10+0.3*Babies$Height+0.1*Babies$Age-0.06*Babies$Gender+0.15*Babies$TummySleep,5)
+Babies$Gender=as.factor(Babies$Gender)
+levels(Babies$Gender)=c('Girls','Boys')
+```
+
+Fitting the model:
+
+```{r}
+#install.packages('lavaan') - we need lavaan package to fit structural equation models, both path models and confirmatory factor analysis
+require(lavaan)
+model1<-'
+Height~1+Age #regression
+'##The model is written between two apostrophes and R sees this as a text values 
+fit1<-sem(model1, data=Babies) #we use sem function to fit the model, while we specify that data is in the dataset Babies 
+```
+
+Comparing with the regression: 
+
+```{r}
+lm1<-lm(Height~Age, data=Babies)
+summary(lm1)
+```
+
+We can also plot the estimates of our model: 
+
+```{r, warning=FALSE, message=FALSE, fig.width=12, fig.height=5, fig.align='center'}
+#install.packages('tidySEM')
+require('tidySEM')
+graph_sem(fit1, variance_diameter=.2)
+```
+
+This will not add an interaction! 
+
+```{r}
+model2<-'
+Height~1+Age*Weight
+'#What * does in this case is that it adds a label to the Weight predictor. This is behaviour only related to sem
+fit2<-sem(model2, data=Babies)
+summary(fit2)
+```
+
+We need to code our interaction in another variable: 
+
+```{r}
+Babies$AgeWeight = Babies$Age * Babies$Weight #interaction between Age and Weight
+Babies$AgeGender = Babies$Age * ifelse(Babies$Gender=='Girls',0,1) # interaction between Age and Gender, where if Gender is Girl then it is coded as 0
+head(Babies)
+```
+
+Now we can add that in the SEM model: 
+```{r}
+model2<-'
+Height~1+Age+Weight + AgeWeight
+'#Interaction of Age and Weight + main effects of Age and Weight
+fit2<-sem(model2, data=Babies)
+summary(fit2)
+```
+
+First path model: 
+
+```{r}
+modelStrength<-'
+Height~Age
+PhysicalSt~Age+Height
+'
+fitStr1<-sem(modelStrength, data=Babies)
+summary(fitStr1)
+```
+
+Visualisation of the results: 
+
+```{r, warning=F, message=F, fig.width=12, fig.height=5, fig.align='center'}
+require(semPlot)
+semPaths(fitStr1, 'model','est', edge.label.cex = 1.1)
+```
+
+Calculation of the indirect and total effects: 
+
+```{r}
+modelStrength<-'
+Height~b*Age
+PhysicalSt~a*Age+c*Height
+
+##quantification of effects
+dir := a
+ind := b*c
+tot := dir+ind
+' #using := we can specify calculations in the sem. You can do any other type of calculaton also, eg. a^2
+fitStr1<-sem(modelStrength, data=Babies)
+summary(fitStr1)
+```
+
+We can also specify more complex path model: 
+
+```{r}
+modelStrength2<-'
+Height~b*Age
+Weight~e*Age
+PhysicalSt~a*Age+c*Height+f*Weight
+
+##quantification of effects
+dir := a
+ind := b*c+e*f
+tot := dir+ind
+'
+```
+
+```{r}
+fitStr2<-sem(modelStrength2, data=Babies)
+summary(fitStr2)
+```
+
+We can get all parameter estimates and bootstrap values 
+
+```{r}
+parameterestimates(fitStr2, boot.ci.type ='bca.simple', standardized = T) #adding bca.simple we are getting bootstrapped intervals using adjusted bootstrap percentile method
+```
+
+Adding categorical predictors can be straightforward if they are exogenous:
+
+```{r}
+Babies$Gender=ifelse(Babies$Gender=='Girls',0,1)
+
+modelStrength3<-'
+Height~Age
+PhysicalSt~Age+Height+Gender
+'
+fitStr3<-sem(modelStrength3, data=Babies)
+summary(fitStr3)
+```
+
+But they are more problematic if categorical predictors are also endogenous 
+
+```{r}
+modelStrength4<-'
+Height~Age
+Gender~Age
+PhysicalSt~Age+Height+Gender
+'
+fitStr4<-sem(modelStrength4, ordered = c('Gender'),data=Babies) #in that case we need to specify which variables are categorical. In this situation, we are specifying that our categorical is ordered and our model assumes that categories are result of underlying gaussian process and will estimate thresholds. These thresholds are values that represent cut-off points between our groups. We do not have to estimate these thresholds, but we can manually specify them.  
+summary(fitStr4)
+```
+
+Conditional process analysis. We have both mediation and moderation:
+
+```{r}
+modelStrengthCond<-'
+Height~Age
+PhysicalSt~Age+Height+AgeGender
+'
+fitStrCond<-sem(modelStrengthCond, data=Babies)
+summary(fitStrCond)
+```
+
+Fixing the predictors to a particular value: 
+
+```{r}
+modelStrengthFix<-'
+Height~Age
+PhysicalSt~0  *Age+Height
+' #inclusion of value in front of our predictor will fix our predictor to that particular value 
+fitStr1Fix<-sem(modelStrengthFix, data=Babies)
+summary(fitStr1Fix)
+```
+
+Constraining parameters:
+
+```{r}
+modelStrengthCons<-'
+Height~a*Age
+PhysicalSt~a*Age+Height
+' # we can also constrain two parameters. Effect of age on Height and on Physical strenght is constrained to the same value. Our mode is now estimating coefficient that will satisfy this constrain. 
+fitStr1Cons<-sem(modelStrengthCons, data=Babies)
+summary(fitStr1Cons)
+```
+
+Practical aspect
+
+Reading the data: 
+
+```{r}
+NBAPath<-read.table('NBApath.txt', sep='\t', header=T)
+```
+
+We can summarise all variables in our dataset. We get type of summary based on our coding of the variables. Factors are being summarised with frequencies, numeric values with mean, min and max. 
+
+```{r}
+summary(NBAPath)
+```
+
+Correlation matrix:
+
+```{r}
+cor(NBAPath[,c(2,5:7)]) # I take only numeric variables 
+```
+
+Density plots:
+
+```{r, fig.width=12, fig.height=5, fig.align='center'}
+par(mfrow=c(1,2), bty='n',mar = c(5, 4, .1, .1), cex=1.1, pch=16)
+plot(density(NBAPath$PER), main='')
+plot(density(NBAPath$PCT), main='')
+```
+
+Scatter plots:
+
+```{r,fig.width=12, fig.height=5, fig.align='center'}
+par(mfrow=c(1,2), bty='n',mar = c(5, 4, .1, .1), cex=1.1, pch=16)
+plot(NBAPath$Age, NBAPath$PER)
+plot(NBAPath$GP, NBAPath$PER)
+```
+
+First specification of the model: 
+
+```{r}
+NBAmod1<-'
+GP~b*Age
+PER~a*Age+c*GP
+
+dir := a
+ind := b*c
+tot := dir + ind
+'
+NBAfit1<-sem(NBAmod1, data=NBAPath)
+summary(NBAfit1)
+```
+
+We can calculate coefficient of determination:
+
+```{r}
+inspect(NBAfit1, 'r2')
+-2*logLik(NBAfit1) # deviance
+AIC(NBAfit1) # Akaike information criterion
+```
+
+Respecification of the model
+
+```{r}
+NBAmod2<-'
+GP~b*Age
+PER~c*GP
+
+ind := b*c
+'
+NBAfit2<-sem(NBAmod2, data=NBAPath)
+summary(NBAfit2, fit.measures=T)
+```
+
+Comparing the models:
+
+```{r, warning=FALSE, message=FALSE}
+#install.packages('semTools')
+require(semTools)
+diff<-compareFit(NBAfit1, NBAfit2)
+summary(diff)
+```
+
+Respecification of the model:
+
+```{r, warning=FALSE, message=FALSE}
+NBAmod3<-'
+GP~b*Age
+PER~a*Age+c*GP
+PCT~d*PER
+ind1 := b*c*d
+ind2 := a*d
+tot := ind1 + ind2
+'
+NBAfit3<-sem(NBAmod3, data=NBAPath)
+summary(NBAfit3, fit.measures=T)
+```
+
